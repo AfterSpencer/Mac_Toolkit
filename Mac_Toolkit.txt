@@ -1,0 +1,250 @@
+with timeout of (240 * 60) seconds
+	tell application "Finder"
+		
+		display dialog "Select location to transfer from or run other task" buttons {"Same Computer", "Another Computer or Share", "Other Task"} default button "Another Computer or Share"
+		set transferType to button returned of the result
+		
+		if transferType = "Other Task" then
+			
+			display dialog "Which other task?" buttons {"Set Admin", "Fix Keychain"} default button "Set Admin"
+			set transferType to button returned of result
+			
+			if transferType = "Set Admin" then
+				
+				display dialog "Please enter the AD Username for the user:" default answer ""
+				set userName to (text returned of result)
+				set validUser to (do shell script "/usr/bin/id " & userName & " 2>/dev/null| awk '{print $1}' | cut -c1-3")
+				
+				if validUser = "uid" then
+					do shell script ("/usr/sbin/dseditgroup -o edit -a " & userName & " -t user admin") with administrator privileges
+					display dialog userName & " is now an admin on this system." buttons {"OK"} default button "OK"
+				else
+					
+					display dialog "Username " & userName & " doesn't seem correct
+		
+Please check name and/or AD Binding and try again" buttons {"OK"} default button "OK"
+					# Stupid thing!
+				end if
+			else
+				
+				
+				display dialog "Please select the Users Home Folder to fix the Keychain." buttons {"OK"} default button "OK"
+				
+				set HomeFolder to choose folder
+				
+				set HomeFolderP to POSIX path of HomeFolder
+				
+				do shell script "runtime=`/bin/date +%Y%m%d`"
+				
+				set runresult to do shell script "runtime=`/bin/date +%Y%m%d`
+	if [ -e " & HomeFolderP & "/Library/Keychains.$runtime ]  
+	then  
+	echo \"exists\" 
+	else 
+	if [ -e " & HomeFolderP & "/Library/Keychains ] 
+	then  
+	/bin/mv " & HomeFolderP & "/Library/Keychains " & HomeFolderP & "/Library/Keychains.$runtime
+	fi 
+	fi" with administrator privileges
+				
+				
+				
+				if ((runresult as string) is equal to "exists") then
+					
+					display dialog "This tool has already been run today for that user.
+Run again?" buttons {"OK", "Cancel"} default button "OK"
+					set tryagain to button returned of the result
+					
+					if tryagain = "OK" then
+						do shell script "runtime=`/bin/date +%Y%m%d`
+			/bin/rm -r " & HomeFolderP & "/Library/Keychains.$runtime
+			if [ -e " & HomeFolderP & "/Library/Keychains ] 
+			then  
+			/bin/mv " & HomeFolderP & "/Library/Keychains " & HomeFolderP & "/Library/Keychains.$runtime 
+			fi" with administrator privileges
+						display dialog "Please reboot to complete the process." buttons {"OK"} default button "OK"
+						
+					end if
+					
+					return
+					
+				else
+					display dialog "Please reboot to complete the process." buttons {"OK"} default button "OK"
+					
+				end if
+			end if
+			
+			
+		else
+			
+			
+			if transferType = "Another Computer or Share" then
+				
+				display dialog "Please choose folder to copy data from." buttons {"OK"} default button "OK"
+				set sourceFolder to choose folder
+				display dialog "Please enter the AD Username for the user:" default answer ""
+				set userName to (text returned of result)
+				set targetFolderP to "/Users/" & userName
+				set sourceFolderP to POSIX path of sourceFolder
+				set validUser to (do shell script "/usr/bin/id " & userName & " 2>/dev/null| awk '{print $1}' | cut -c1-3")
+				set currentUser to (do shell script "/usr/bin/id 2>/dev/null| awk '{print $1}' ")
+				set validUserLng to (do shell script "/usr/bin/id " & userName & " 2>/dev/null| awk '{print $1}'")
+				set sharedPathP to "/Users/Shared/"
+				set sharedPath to (POSIX file sharedPathP) as string
+				set homeExists to (do shell script "if [ -d /Users/" & userName & " ]; then echo yes; else echo no; fi")
+				set myName to do shell script ("whoami")
+				
+				if currentUser = validUserLng then
+					
+					display dialog "It looks like you are logged in as " & userName & "
+Please login as another user and try again." buttons {"OK"} default button "OK"
+					return
+				else
+					
+					if homeExists = "yes" then
+						display dialog "It looks like /Users/" & userName & " already exists.
+Please rename the folder and try again 
+or try another user." buttons {"OK"} default button "OK"
+						return
+					else
+						if validUser = "uid" then
+							
+							display dialog "Terminal will open. If prompted please type the password for " & myName & "" buttons {"OK"} default button "OK"
+							
+							tell application "Terminal"
+								activate
+								do script "sudo whoami && echo \"Success\" && sleep 5 && killall Terminal"
+							end tell
+							
+							repeat
+								tell application "System Events"
+									if "Terminal" is not in (name of application processes) then exit repeat
+								end tell
+								delay 5
+							end repeat
+							
+							
+							
+							display dialog "The contents of " & sourceFolderP & "
+will be copied to " & targetFolderP & "
+
+Permissions will be set for " & targetFolderP & " 
+to " & userName & ":staff 
+
+And
+
+" & userName & " will be added to the administrators group.
+		
+Does this look correct?" buttons {"Yes", "No"} default button "No"
+							set buttonReturned to button returned of the result
+							
+							if buttonReturned = "Yes" then
+								
+								display dialog "The next steps may take a while. Please wait until you see a migration complete message" buttons {"OK"} default button "OK"
+								do shell script ("if [ -d " & sourceFolderP & "/Library ]; then /usr/bin/sudo /usr/bin/chflags nohidden " & sourceFolderP & "/Library; fi")
+								tell application "Terminal"
+									activate
+									do script "sudo rsync -vru --exclude='.Trash' \"" & sourceFolderP & "\" " & targetFolderP & " && echo \"rsync complete\" && sleep 10 && killall Terminal"
+								end tell
+								
+								repeat
+									tell application "System Events"
+										if "Terminal" is not in (name of application processes) then exit repeat
+									end tell
+									delay 5
+								end repeat
+								do shell script ("/usr/sbin/chown -R " & userName & ":staff " & targetFolderP & "; /usr/sbin/dseditgroup -o edit -a " & userName & " -t user admin") with administrator privileges
+								set libraryExists to (do shell script "if [ -d /Users/" & userName & "/Library ]; then echo yes; else echo no; fi")
+								if libraryExists = "no" then
+									display dialog "Library does not seem to have been copied. 
+Please check and copy it manually if needed." buttons {"OK"} default button "OK"
+								end if
+								
+							else
+								
+								display dialog "Canceled migration" buttons {"OK"} default button "OK"
+								
+								return
+								
+								
+							end if
+							
+						else
+							
+							display dialog "Username doesn't seem correct
+		
+Please check name and/or AD Binding and try again" buttons {"OK"} default button "OK"
+							return
+							
+						end if
+						
+						display dialog "User migration complete!" buttons {"OK"} default button "OK"
+					end if
+				end if
+				
+			else
+				# User move section
+				
+				display dialog "Please choose folder to move data from." buttons {"OK"} default button "OK"
+				set sourceFolder to choose folder
+				display dialog "Please enter the AD Username for the user:" default answer ""
+				set userName to (text returned of result)
+				set targetFolderP to "/Users/" & userName
+				set sourceFolderP to POSIX path of sourceFolder
+				set validUser to (do shell script "/usr/bin/id " & userName & " 2>/dev/null| awk '{print $1}' | cut -c1-3")
+				set currentUser to (do shell script "/usr/bin/id 2>/dev/null| awk '{print $1}' ")
+				set validUserLng to (do shell script "/usr/bin/id " & userName & " 2>/dev/null| awk '{print $1}'")
+				set homeExists to (do shell script "if [ -d /Users/" & userName & " ]; then echo yes; else echo no; fi")
+				
+				if currentUser = validUserLng then
+					
+					display dialog "It looks like you are logged in as " & userName & "
+Please login as another user and try again." buttons {"OK"} default button "OK"
+					return
+				else
+					if validUser = "uid" then
+						display dialog "The contents of " & sourceFolderP & "
+will be moved to " & targetFolderP & "
+
+Permissions will be set for " & targetFolderP & " 
+to " & userName & ":staff 
+
+And
+
+" & userName & " will be added to the administrators group.
+		
+Does this look correct?" buttons {"Yes", "No"} default button "No"
+						set buttonReturned to button returned of the result
+						
+						if buttonReturned = "Yes" then
+							
+							display dialog "The next steps may take a while. Please wait until you see a migration complete message" buttons {"OK"} default button "OK"
+							do shell script ("/bin/mv " & targetFolderP & " " & targetFolderP & ".bak; /bin/mv " & sourceFolderP & " " & targetFolderP & "; /usr/sbin/chown -R " & userName & ":staff " & targetFolderP & "; /usr/sbin/dseditgroup -o edit -a " & userName & " -t user admin") with administrator privileges
+							
+						else
+							
+							display dialog "Canceled migration" buttons {"OK"} default button "OK"
+							
+							return
+							
+							
+						end if
+						
+					else
+						
+						display dialog "Username doesn't seem correct
+		
+Please check name and/or AD Binding and try again" buttons {"OK"} default button "OK"
+						return
+						
+					end if
+					display dialog "User migration complete!" buttons {"OK"} default button "OK"
+					
+				end if
+				
+			end if
+			
+		end if
+	end tell
+end timeout
+
